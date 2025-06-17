@@ -30,7 +30,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -641,71 +640,9 @@ func formPartToPayload(field, data string, p *parsedPayload) {
 // * nothing starting with '.'
 var filenameRegexp = regexp.MustCompile(`^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|heic|gif|mp4|txt|mov|heif|har|json)$`)
 
-// saveFormPart saves a file upload to the report directory.
-//
-// Returns the leafname of the saved file.
-func saveFormPart(ctx context.Context, leafName string, reader io.Reader, reportDir string) (string, error) {
-	if !filenameRegexp.MatchString(leafName) {
-		return "", fmt.Errorf("invalid upload filename")
-	}
-
-	fullName := filepath.Join(reportDir, leafName)
-
-	zerolog.Ctx(ctx).Info().Str("file_destination", fullName).Msg("Saving uploaded file")
-
-	f, err := os.Create(fullName)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	_, err = io.Copy(f, reader)
-	if err != nil {
-		return "", err
-	}
-
-	return leafName, nil
-}
-
 // we require a sensible extension, and don't allow the filename to start with
 // '.'
 var logRegexp = regexp.MustCompile(`^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*\.(log|txt)$`)
-
-// saveLogPart saves a log upload to the report directory.
-//
-// Returns the leafname of the saved file.
-func saveLogPart(logNum int, filename string, reader io.Reader, reportDir string) (string, error) {
-	// pick a name to save the log file with.
-	//
-	// some clients use sensible names (foo.N.log), which we preserve. For
-	// others, we just make up a filename.
-	//
-	// Either way, we need to append .gz, because we're compressing it.
-	var leafName string
-	if logRegexp.MatchString(filename) {
-		leafName = filename + ".gz"
-	} else {
-		leafName = fmt.Sprintf("logs-%04d.log.gz", logNum)
-	}
-
-	fullname := filepath.Join(reportDir, leafName)
-
-	f, err := os.Create(fullname)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	gz := gzip.NewWriter(f)
-	defer gz.Close()
-
-	_, err = io.Copy(gz, reader)
-	if err != nil {
-		return "", err
-	}
-
-	return leafName, nil
-}
 
 func (s *submitServer) saveReportBackground(ctx context.Context, p parsedPayload, listingURL string) error {
 	var resp submitResponse
@@ -1168,27 +1105,4 @@ func gzipAndSaveS3(ctx context.Context, s3Client *minio.Client, bucket, reportDi
 	}()
 	_, err := s3Client.PutObject(ctx, bucket, objectName, pr, -1, minio.PutObjectOptions{})
 	return err
-}
-
-func gzipAndSave(data []byte, dirname, fpath string) error {
-	fpath = filepath.Join(dirname, fpath)
-
-	if _, err := os.Stat(fpath); err == nil {
-		return fmt.Errorf("file already exists") // the user can just retry
-	}
-	var b bytes.Buffer
-	gz := gzip.NewWriter(&b)
-	if _, err := gz.Write(data); err != nil {
-		return err
-	}
-	if err := gz.Flush(); err != nil {
-		return err
-	}
-	if err := gz.Close(); err != nil {
-		return err
-	}
-	if err := os.WriteFile(fpath, b.Bytes(), 0644); err != nil {
-		return err
-	}
-	return nil
 }
