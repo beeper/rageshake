@@ -18,21 +18,21 @@ package main
 
 import (
 	"compress/gzip"
-	"fmt"
+	"context"
 	"io"
 	"net/http"
+	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
-	"github.com/minio/minio-go/v7"
 	"github.com/rs/zerolog"
 )
 
 // logServer is an http.handler which will serve up bugreports
 type logServer struct {
-	s3Client *minio.Client
-	s3Bucket string
+	root string
 }
 
 func (f *logServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -53,144 +53,59 @@ func (f *logServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// eliminate ., .., //, etc
 	upath = path.Clean(upath)
 
-	// reject some dodgy paths
+	// reject some dodgy paths. This is based on the code for http.Dir.Open (see https://golang.org/src/net/http/fs.go#L37).
+	//
+	// the check for '..' is a sanity-check because my understanding of `path.Clean` is that it should never return
+	// a value including '..' for input starting with '/'. It's taken from the code for http.ServeFile
+	// (https://golang.org/src/net/http/fs.go#L637).
 	if containsDotDot(upath) || strings.Contains(upath, "\x00") || (filepath.Separator != '/' && strings.ContainsRune(upath, filepath.Separator)) {
 		http.Error(w, "invalid URL path", http.StatusBadRequest)
 		return
 	}
-	objectName := strings.TrimPrefix(upath, "/")
 
-	// Directory listing (unchanged)
-	if strings.HasSuffix(r.URL.Path, "/") || objectName == "" {
-		// List S3 objects with this prefix
-		prefix := objectName
-		if prefix != "" && !strings.HasSuffix(prefix, "/") {
-			prefix += "/"
-		}
-		var entries []string
-		opts := minio.ListObjectsOptions{
-			Prefix:    prefix,
-			Recursive: false,
-		}
-		for obj := range f.s3Client.ListObjects(ctx, f.s3Bucket, opts) {
-			if obj.Err != nil {
-				log.Err(obj.Err).Msg("Error listing S3 objects")
-				http.Error(w, "error listing directory", http.StatusInternalServerError)
-				return
-			}
-			name := strings.TrimPrefix(obj.Key, prefix)
-			// Only show direct children
-			if name == "" {
-				continue
-			}
-			// If it's a subdirectory, only show the first segment
-			if idx := strings.IndexRune(name, '/'); idx != -1 {
-				name = name[:idx+1]
-			}
-			// Avoid duplicates
-			found := false
-			for _, e := range entries {
-				if e == name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				entries = append(entries, name)
-			}
-		}
-		// Sort entries
-		// Optionally: sort.Strings(entries)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, "<html><body><h1>Listing for /%s</h1><ul>", htmlEscape(prefix))
-		parent := path.Dir("/" + prefix)
-		if parent != "/" && parent != "." {
-			fmt.Fprintf(w, `<li><a href="%s/">../</a></li>`, htmlEscape(parent))
-		}
-		for _, e := range entries {
-			link := e
-			if strings.HasSuffix(e, "/") {
-				fmt.Fprintf(w, `<li><a href="%s">%s</a></li>`, htmlEscape(e), htmlEscape(e))
-			} else {
-				fmt.Fprintf(w, `<li><a href="%s">%s</a></li>`, htmlEscape(link), htmlEscape(e))
-			}
-		}
-		fmt.Fprint(w, "</ul></body></html>")
-		return
-	}
+	// convert to abs path
+	upath, err := filepath.Abs(filepath.Join(f.root, filepath.FromSlash(upath)))
 
-	// Otherwise, serve the file from S3
-	obj, err := f.s3Client.GetObject(ctx, f.s3Bucket, objectName, minio.GetObjectOptions{})
 	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
-	}
-	defer obj.Close()
-	stat, err := obj.Stat()
-	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
+		msg, code := toHTTPError(err)
+		http.Error(w, msg, code)
 		return
 	}
 
+	serveFile(ctx, w, r, upath)
+}
+
+func serveFile(ctx context.Context, w http.ResponseWriter, r *http.Request, path string) {
+	log := zerolog.Ctx(ctx).With().Str("action", "serve_file").Logger()
+	d, err := os.Stat(path)
+	if err != nil {
+		msg, code := toHTTPError(err)
+		http.Error(w, msg, code)
+		return
+	}
+
+	// for anti-XSS belt-and-braces, set a very restrictive CSP
 	w.Header().Set("Content-Security-Policy", "default-src: none")
-	w.Header().Set("Content-Type", extensionToMimeType(objectName))
 
-	if strings.HasSuffix(objectName, ".gz") {
-		serveS3GzippedFile(w, r, obj, stat.Size)
-	} else {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size))
-		w.WriteHeader(http.StatusOK)
-		io.Copy(w, obj)
-	}
-}
-
-// Serve a .gz file from S3, decompressing if needed
-func serveS3GzippedFile(w http.ResponseWriter, r *http.Request, obj *minio.Object, size int64) {
-	acceptsGzip := clientAcceptsGzip(r)
-	if acceptsGzip {
-		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-		w.WriteHeader(http.StatusOK)
-		io.Copy(w, obj)
-	} else {
-		serveS3Ungzipped(w, obj)
-	}
-}
-
-// Serve a .gz file from S3, decompressing on the fly
-func serveS3Ungzipped(w http.ResponseWriter, obj *minio.Object) {
-	gz, err := gzip.NewReader(obj)
-	if err != nil {
-		http.Error(w, "failed to decompress", http.StatusInternalServerError)
+	// if it's a directory, serve a listing
+	if d.IsDir() {
+		log.Info().Msg("Serving listing")
+		http.ServeFile(w, r, path)
 		return
 	}
-	defer gz.Close()
-	w.WriteHeader(http.StatusOK)
-	io.Copy(w, gz)
-}
 
-// Utility: check if client accepts gzip
-func clientAcceptsGzip(r *http.Request) bool {
-	splitRune := func(s rune) bool { return s == ' ' || s == '\t' || s == '\n' || s == ',' }
-	for _, hdr := range r.Header["Accept-Encoding"] {
-		for _, enc := range strings.FieldsFunc(hdr, splitRune) {
-			if enc == "gzip" {
-				return true
-			}
-		}
+	// if it's a gzipped log file, serve it as text
+	if strings.HasSuffix(path, ".gz") {
+		serveGzippedFile(w, r, path, d.Size())
+		return
 	}
-	return false
-}
 
-func htmlEscape(s string) string {
-	replacer := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		"\"", "&quot;",
-		"'", "&#39;",
-	)
-	return replacer.Replace(s)
+	// otherwise, limit ourselves to a number of known-safe content-types, to
+	// guard against XSS vulnerabilities.
+	// http.serveFile preserves the content-type header if one is already set.
+	w.Header().Set("Content-Type", extensionToMimeType(path))
+
+	http.ServeFile(w, r, path)
 }
 
 // extensionToMimeType returns a suitable mime type for the given filename
@@ -216,6 +131,77 @@ func extensionToMimeType(path string) string {
 	}
 
 	return "application/octet-stream"
+}
+
+func serveGzippedFile(w http.ResponseWriter, r *http.Request, path string, size int64) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+	acceptsGzip := false
+	splitRune := func(s rune) bool { return s == ' ' || s == '\t' || s == '\n' || s == ',' }
+	for _, hdr := range r.Header["Accept-Encoding"] {
+		for _, enc := range strings.FieldsFunc(hdr, splitRune) {
+			if enc == "gzip" {
+				acceptsGzip = true
+				break
+			}
+		}
+	}
+
+	if acceptsGzip {
+		serveGzip(w, path, size)
+	} else {
+		serveUngzipped(w, path)
+	}
+}
+
+// serveGzip serves a gzipped file with gzip content-encoding
+func serveGzip(w http.ResponseWriter, path string, size int64) {
+	f, err := os.Open(path)
+	if err != nil {
+		msg, code := toHTTPError(err)
+		http.Error(w, msg, code)
+		return
+	}
+	defer f.Close()
+
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, f)
+}
+
+// serveUngzipped ungzips a gzipped file and serves it
+func serveUngzipped(w http.ResponseWriter, path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		msg, code := toHTTPError(err)
+		http.Error(w, msg, code)
+		return
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		msg, code := toHTTPError(err)
+		http.Error(w, msg, code)
+		return
+	}
+	defer gz.Close()
+
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, gz)
+}
+
+func toHTTPError(err error) (msg string, httpStatus int) {
+	if os.IsNotExist(err) {
+		return "404 page not found", http.StatusNotFound
+	}
+	if os.IsPermission(err) {
+		return "403 Forbidden", http.StatusForbidden
+	}
+	// Default:
+	return "500 Internal Server Error", http.StatusInternalServerError
 }
 
 func containsDotDot(v string) bool {

@@ -157,7 +157,7 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	rand.Read(randBytes)
 	prefix += "-" + base32.StdEncoding.EncodeToString(randBytes)
 	reportDir := prefix // S3 object prefix, not a local path
-	listingURL := s.apiPrefix + "/listing/" + prefix
+	listingURL := s.apiPrefix + "/listingS3/" + prefix
 	log = log.With().
 		Str("report_dir", reportDir).
 		Str("listing_url", listingURL).
@@ -991,7 +991,7 @@ func (s *submitServer) buildReportBody(ctx context.Context, p parsedPayload, lis
 		fileURL := listingURL + "/" + file
 		ext := strings.ToLower(filepath.Ext(file))
 		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" {
-			jwtTok, err := s.createToken(strings.TrimPrefix(fileURL, s.apiPrefix+"/listing/"))
+			jwtTok, err := s.createToken(strings.TrimPrefix(fileURL, s.apiPrefix+"/listingS3/"))
 			if err != nil {
 				zerolog.Ctx(ctx).Err(err).Msg("Error creating token for image URL")
 			} else {
