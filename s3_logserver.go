@@ -144,8 +144,10 @@ func (f *s3LogServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Serve a .gz file from S3, decompressing if needed
+// Serve a .gz text file from S3, decompressing if needed
 func serveS3GzippedFile(w http.ResponseWriter, r *http.Request, obj *minio.Object, size int64) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
 	acceptsGzip := clientAcceptsGzip(r)
 	if acceptsGzip {
 		w.Header().Set("Content-Encoding", "gzip")
