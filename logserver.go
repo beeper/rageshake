@@ -46,9 +46,7 @@ func (f *logServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Str("url_path", upath).
 		Logger()
 	ctx := log.WithContext(r.Context())
-	
-	log.Info().Msg("Serving report logs")
-	
+		
 	if !strings.HasPrefix(upath, "/") {
 		upath = "/" + upath
 		r.URL.Path = upath
@@ -300,17 +298,14 @@ func serveFile(ctx context.Context, w http.ResponseWriter, r *http.Request, file
 	// otherwise, limit ourselves to a number of known-safe content-types, to
 	// guard against XSS vulnerabilities.
 	w.Header().Set("Content-Type", extensionToMimeType(filename))
-	// read everything from the reader and write it to the response
-	log.Debug().Str("filename", filename).Msg("Serving file")
 	w.Header().Set("Content-Disposition", "inline")
-	w.Header().Set("Content-Length", strconv.FormatInt(-1, 10)) // -1 means unknown length
+	
+	// read everything from the reader and write it to the response
 	if _, err := io.Copy(w, reader); err != nil {
 		log.Error().Err(err).Msg("Failed to copy file content to response")
 		http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	log.Debug().Msg("File served successfully")
-	w.WriteHeader(http.StatusOK)
 }
 
 // extensionToMimeType returns a suitable mime type for the given filename
