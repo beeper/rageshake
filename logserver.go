@@ -47,16 +47,8 @@ func (f *logServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Logger()
 	ctx := log.WithContext(r.Context())
 		
-	if !strings.HasPrefix(upath, "/") {
-		upath = "/" + upath
-		r.URL.Path = upath
-	}
-
-	// eliminate ., .., //, etc
-	upath = path.Clean(upath)
-
-	// remove the leading slash, will turn root into ""
-	upath = strings.TrimPrefix(upath, "/")
+	// clean the path, then remove the leading slash (r.URL.Path always starts with a slash)
+	upath = path.Clean(upath)[1:]
 
 	// reject some dodgy paths. This is based on the code for http.Dir.Open (see https://golang.org/src/net/http/fs.go#L37).
 	//
@@ -138,6 +130,13 @@ func (f *logServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(entries) == 0 {
 		log.Info().Msg("Directory is empty/file not found")
 		http.Error(w, "404 page not found", http.StatusNotFound)
+		return
+	}
+
+	// redirect to cannonical path if it does not end with a slash so relative links work
+	if !strings.HasSuffix(r.URL.Path, "/") {
+		log.Debug().Msg("Redirecting to canonical path with trailing slash")
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 		return
 	}
 
