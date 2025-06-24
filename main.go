@@ -199,7 +199,7 @@ func main() {
 		s3Client: s3Client,
 	}
 	fs := basicAuthOrJWTAuthenticated(ls, cfg.BugsUser, cfg.BugsPass, "Riot bug reports", []byte(cfg.BugsJWTSecret))
-	http.Handle("/api/listing/", http.StripPrefix("/api/listing/", fs))
+	http.Handle("/api/listing/", http.StripPrefix("/api/listing", fs))
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "ok")

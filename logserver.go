@@ -133,10 +133,10 @@ func (f *logServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// redirect to cannonical path if it does not end with a slash so relative links work
-	if !strings.HasSuffix(r.URL.Path, "/") {
-		log.Debug().Msg("Redirecting to canonical path with trailing slash")
-		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+	// redirect to cannonical path if it does not end with a slash so relative links work]
+	if r.URL.Path == "" || r.URL.Path[len(r.URL.Path)-1] != '/' {
+		log.Debug().Str("base", path.Base(r.URL.Path)).Str("upath", upath).Msg("Redirecting to canonical path with trailing slash")
+		localRedirect(w, r, path.Base(r.URL.Path)+"/")
 		return
 	}
 
@@ -149,6 +149,16 @@ func (f *logServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("<a href=\"" + entry + "\">" + entry + "</a>\n"))
 	}
 	w.Write([]byte("</pre>\n"))
+}
+
+// localRedirect gives a Moved Permanently response.
+// It does not convert relative paths to absolute paths like Redirect does.
+func localRedirect(w http.ResponseWriter, r *http.Request, newPath string) {
+	if q := r.URL.RawQuery; q != "" {
+		newPath += "?" + q
+	}
+	w.Header().Set("Location", newPath)
+	w.WriteHeader(http.StatusMovedPermanently)
 }
 
 func (f *logServer) checkS3FileExists(ctx context.Context, objectName string) (bool, error) {
