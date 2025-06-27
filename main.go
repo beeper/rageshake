@@ -111,7 +111,7 @@ func basicAuthOrJWTAuthenticated(handler http.Handler, username, password, realm
 				log.Error().Str("issuer", claims.Issuer).Msg("Token issuer not rageshake or API server")
 				unauthorized(w)
 				return
-			} else if claims.Subject != r.URL.Path {
+			} else if claims.Subject != strings.TrimPrefix(r.URL.Path, "/") {
 				log.Error().Str("subject", claims.Subject).Str("path", r.URL.Path).Msg("Token subject not the request path")
 				unauthorized(w)
 				return
