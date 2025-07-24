@@ -1027,15 +1027,14 @@ func printDataKeys(p parsedPayload, output io.Writer, title string, keys []strin
 }
 
 func (s *submitServer) buildGenericIssueRequest(ctx context.Context, p parsedPayload, listingURL string) (title, body string) {
-	bodyBuf := s.buildReportBody(ctx, p, listingURL)
+	// Swap out rageshake API url for SSO-version for all links
+	ssoListingURL := strings.ReplaceAll(listingURL, "rageshake.", "rageshake-sso.")
+	bodyBuf := s.buildReportBody(ctx, p, ssoListingURL)
 
 	username, isVerified := getUsernameFromPayload(p)
 
-	// Swap out rageshake API url for SSO-version
-	rageshakeLogsURL := strings.ReplaceAll(listingURL, "rageshake.", "rageshake-sso.")
-
 	// Add log links to the body
-	fmt.Fprintf(bodyBuf, "\n### [Rageshake Logs](%s)", rageshakeLogsURL)
+	fmt.Fprintf(bodyBuf, "\n### [Rageshake Logs](%s)", ssoListingURL)
 	if isVerified {
 		fmt.Fprintf(bodyBuf, " | [User Admin](https://admin.beeper.com/user/%s)", username)
 		if bridgeLogsURL, megahungryLogsURL, err := makeGrafanaLogsURLs(username); err != nil {
