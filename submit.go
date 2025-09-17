@@ -217,6 +217,8 @@ type whoamiBridgeInfo struct {
 
 type matrixWhoamiResponse struct {
 	UserInfo struct {
+		Token         string    `json:"token"`
+		Username      string    `json:"username"`
 		Hungryserv    bool      `json:"useHungryserv"`
 		Channel       string    `json:"channel"`
 		SupportRoomID string    `json:"supportRoomId"`
@@ -284,22 +286,22 @@ func (s *submitServer) verifyIMAToken(ctx context.Context, auth, userID string) 
 	return &respData, nil
 }
 
-func (s *submitServer) verifyMatrixAccessToken(ctx context.Context, auth, userID string) (*matrixWhoamiResponse, error) {
+func (s *submitServer) verifyMatrixAccessToken(ctx context.Context, auth, userID string) (string, *matrixWhoamiResponse, error) {
 	if len(auth) == 0 {
-		return nil, fmt.Errorf("missing authorization header")
+		return "", nil, fmt.Errorf("missing authorization header")
 	} else if !strings.HasPrefix(auth, "Bearer ") {
-		return nil, fmt.Errorf("invalid authorization header")
+		return "", nil, fmt.Errorf("invalid authorization header")
 	}
 
 	colonIndex := strings.IndexRune(userID, ':')
 	if colonIndex <= 0 || strings.IndexRune(userID, '@') != 0 {
-		return nil, fmt.Errorf("invalid user ID")
+		return "", nil, fmt.Errorf("invalid user ID")
 	}
 
 	server := userID[colonIndex+1:]
 	apiServerURL, ok := s.cfg.APIServerURLs[server]
 	if !ok {
-		return nil, fmt.Errorf("unsupported homeserver '%s'", server)
+		return "", nil, fmt.Errorf("unsupported homeserver '%s'", server)
 	}
 
 	baseURL, _ := url.Parse(apiServerURL)
@@ -307,7 +309,7 @@ func (s *submitServer) verifyMatrixAccessToken(ctx context.Context, auth, userID
 	baseURL.RawQuery = url.Values{"includeMatrix": []string{"1"}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create http request: %w", err)
+		return "", nil, fmt.Errorf("failed to create http request: %w", err)
 	}
 	req.Header.Set("Authorization", auth)
 	var respData matrixWhoamiResponse
@@ -316,15 +318,19 @@ func (s *submitServer) verifyMatrixAccessToken(ctx context.Context, auth, userID
 		defer resp.Body.Close()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to make whoami request: %w", err)
+		return "", nil, fmt.Errorf("failed to make whoami request: %w", err)
 	} else if respBytes, err := io.ReadAll(resp.Body); err != nil {
-		return nil, fmt.Errorf("failed to read whoami response body (status %d): %w", resp.StatusCode, err)
+		return "", nil, fmt.Errorf("failed to read whoami response body (status %d): %w", resp.StatusCode, err)
 	} else if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("whoami returned non-200 status code %d (data: %s)", resp.StatusCode, respBytes)
+		return "", nil, fmt.Errorf("whoami returned non-200 status code %d (data: %s)", resp.StatusCode, respBytes)
 	} else if err = json.Unmarshal(respBytes, &respData); err != nil {
-		return nil, fmt.Errorf("failed to parse success whoami response body: %w", err)
+		return "", nil, fmt.Errorf("failed to parse success whoami response body: %w", err)
 	}
-	return &respData, nil
+	userID = respData.Matrix.UserID
+	if userID == "" && respData.UserInfo.Username != "" {
+		userID = fmt.Sprintf("@%s:%s", respData.UserInfo.Username, server)
+	}
+	return userID, &respData, nil
 }
 
 func isMultipart(contentType string) bool {
@@ -433,21 +439,28 @@ func (s *submitServer) parseRequest(ctx context.Context, w http.ResponseWriter, 
 			p.Data["user_id"] = p.VerifiedUserID
 		}
 	} else {
-		whoami, err := s.verifyMatrixAccessToken(req.Context(), req.Header.Get("Authorization"), userID)
+		verifiedUserID, whoami, err := s.verifyMatrixAccessToken(req.Context(), req.Header.Get("Authorization"), userID)
 		if err != nil {
 			log.Warn().Err(err).Msg("Error verifying user ID")
 			p.Data["unverified_user_id"] = userID
 		} else {
 			p.MatrixWhoami = whoami
-			p.VerifiedUserID = whoami.Matrix.UserID
+			p.VerifiedUserID = verifiedUserID
 			p.VerifiedDeviceID = whoami.Matrix.DeviceID
 			if p.VerifiedUserID != userID {
 				log.Warn().
 					Str("verified_user_id", p.VerifiedUserID).
 					Msg("Mismatching user ID. Overriding with verified user ID")
 			}
-			p.Data["verified_device_id"] = p.VerifiedDeviceID
-			p.Data["user_id"] = p.VerifiedUserID
+			if p.VerifiedDeviceID != "" {
+				p.Data["verified_device_id"] = p.VerifiedDeviceID
+			}
+			if p.VerifiedUserID != "" {
+				p.Data["user_id"] = p.VerifiedUserID
+			}
+			if whoami.UserInfo.Token != "" {
+				p.Data["user_token"] = whoami.UserInfo.Token
+			}
 		}
 	}
 	return p
