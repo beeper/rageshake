@@ -62,7 +62,7 @@ type config struct {
 	S3SecretAccessKey string `yaml:"s3_secret_access_key"`
 	S3Bucket          string `yaml:"s3_bucket"`
 	S3UseSSL          bool   `yaml:"s3_use_ssl"`
-	S3Region		  string `yaml:"s3_region"`
+	S3Region          string `yaml:"s3_region"`
 }
 
 const (
@@ -194,7 +194,7 @@ func main() {
 	})
 
 	ls := &logServer{
-		root: "bugs",
+		root:     "bugs",
 		s3Bucket: cfg.S3Bucket,
 		s3Client: s3Client,
 	}

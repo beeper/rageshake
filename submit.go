@@ -1077,7 +1077,7 @@ func saveLogPartS3(ctx context.Context, s3Client *minio.Client, bucket string, l
 	} else {
 		leafName = fmt.Sprintf("logs-%04d.log", logNum)
 	}
-	
+
 	err := uploadToS3(ctx, s3Client, bucket, reportDir, leafName, reader, true)
 	if err != nil {
 		return "", err

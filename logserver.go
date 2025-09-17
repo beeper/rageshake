@@ -34,7 +34,7 @@ import (
 
 // logServer is an http.handler which will serve up bugreports
 type logServer struct {
-	root string
+	root     string
 	s3Client *minio.Client
 	s3Bucket string
 }
@@ -46,7 +46,7 @@ func (f *logServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Str("url_path", upath).
 		Logger()
 	ctx := log.WithContext(r.Context())
-		
+
 	// clean the path, then remove the leading slash (r.URL.Path always starts with a slash)
 	upath = path.Clean(upath)[1:]
 
@@ -179,7 +179,7 @@ func (f *logServer) enumerateS3Directory(ctx context.Context, prefix string) ([]
 	log.Debug().Str("s3_bucket", f.s3Bucket).Str("prefix", prefix).Msg("Enumerating S3 directory")
 
 	// add a trailing slash to prevent partial matches (e.g. "2025-" matching "2025-01-01/" and "2025-01-02/")
-	if prefix != "" && !strings.HasSuffix(prefix, "/") { 
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
 	var entries []string
@@ -308,7 +308,7 @@ func serveFile(ctx context.Context, w http.ResponseWriter, r *http.Request, file
 	// guard against XSS vulnerabilities.
 	w.Header().Set("Content-Type", extensionToMimeType(filename))
 	w.Header().Set("Content-Disposition", "inline")
-	
+
 	// read everything from the reader and write it to the response
 	if _, err := io.Copy(w, reader); err != nil {
 		log.Error().Err(err).Msg("Failed to copy file content to response")
@@ -322,7 +322,7 @@ func serveFile(ctx context.Context, w http.ResponseWriter, r *http.Request, file
 // Unlike mime.TypeByExtension, the results are limited to a set of types which
 // should be safe to serve to a browser without introducing XSS vulnerabilities.
 func extensionToMimeType(path string) string {
-	if strings.HasSuffix(path, ".txt") || strings.HasSuffix(path, ".log"){
+	if strings.HasSuffix(path, ".txt") || strings.HasSuffix(path, ".log") {
 		// anyone uploading text in anything other than utf-8 needs to be
 		// re-educated.
 		return "text/plain; charset=utf-8"
