@@ -123,6 +123,7 @@ func (p parsedPayload) WriteToBuffer(out *bytes.Buffer) {
 type submitResponse struct {
 	ReportURL   string `json:"report_url,omitempty"`
 	IssueNumber string `json:"issue_number,omitempty"`
+	IssueID     string `json:"issue_id,omitempty"`
 }
 
 var gplaySpamEmailRegex = regexp.MustCompile(`^[a-z]+.\d{5}@gmail\.com$`)
@@ -806,6 +807,7 @@ func (s *submitServer) submitLinearIssue(ctx context.Context, p parsedPayload, l
 
 			resp.ReportURL = createResp.IssueCreate.Issue.URL
 			resp.IssueNumber = createResp.IssueCreate.Issue.Identifier
+			resp.IssueID = createResp.IssueCreate.Issue.ID
 
 			log.Info().
 				Str("url", createResp.IssueCreate.Issue.URL).
@@ -828,6 +830,7 @@ type webhookRequest struct {
 	ListingURL  string        `json:"listing_url"`
 	ReportURL   string        `json:"report_url"`
 	IssueNumber string        `json:"issue_number"`
+	IssueID     string        `json:"issue_id"`
 }
 
 func (s *submitServer) submitWebhook(ctx context.Context, p parsedPayload, listingURL string, submitResp *submitResponse) error {
@@ -841,6 +844,7 @@ func (s *submitServer) submitWebhook(ctx context.Context, p parsedPayload, listi
 		ListingURL:  listingURL,
 		ReportURL:   submitResp.ReportURL,
 		IssueNumber: submitResp.IssueNumber,
+		IssueID:     submitResp.IssueID,
 	}
 
 	var body bytes.Buffer
