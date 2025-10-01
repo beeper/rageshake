@@ -298,7 +298,7 @@ func LinearRequest(ctx context.Context, payload *GraphQLRequest, into any) error
 	} else if resp.StatusCode != 200 {
 		log.Error().Int("status_code", resp.StatusCode).Str("resp_data", string(data)).Msg("Got non-200 response")
 	} else if json.Valid(data) {
-		log.Info().RawJSON("resp_data", data).Msg("Received GraphQL response from Linear")
+		log.Info().RawJSON("resp_data", bytes.TrimSpace(data)).Msg("Received GraphQL response from Linear")
 	} else {
 		log.Warn().Str("resp_data_invalid", string(data)).Msg("Received non-JSON GraphQL response from Linear")
 	}

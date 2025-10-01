@@ -171,6 +171,10 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	log.UpdateContext(func(c zerolog.Context) zerolog.Context {
+		return c.Str("verified_user_id", p.VerifiedUserID).Str("verified_device_id", p.VerifiedDeviceID)
+	})
+
 	if req.Context().Err() != nil {
 		return
 	}
@@ -665,7 +669,7 @@ func (s *submitServer) saveReportBackground(ctx context.Context, p parsedPayload
 		return err
 	}
 
-	if err := s.submitWebhook(context.Background(), p, listingURL, &resp); err != nil {
+	if err := s.submitWebhook(ctx, p, listingURL, &resp); err != nil {
 		return err
 	}
 
@@ -675,14 +679,14 @@ func (s *submitServer) saveReportBackground(ctx context.Context, p parsedPayload
 func (s *submitServer) saveReport(log zerolog.Logger, p parsedPayload, reportDir, listingURL string) error {
 	var summaryBuf bytes.Buffer
 	p.WriteToBuffer(&summaryBuf)
-	if err := uploadToS3(context.Background(), s.s3Client, s.s3Bucket, reportDir, "details.log", &summaryBuf, true); err != nil {
+	ctx := log.WithContext(context.Background())
+	if err := uploadToS3(ctx, s.s3Client, s.s3Bucket, reportDir, "details.log", &summaryBuf, true); err != nil {
 		log.Err(err).Msg("Error uploading report details")
 		return err
 	}
 
 	go func() {
-		log = log.With().Str("action", "save_report_background").Logger()
-		err := s.saveReportBackground(log.WithContext(context.Background()), p, listingURL)
+		err := s.saveReportBackground(ctx, p, listingURL)
 		if err != nil {
 			log.Err(err).Msg("Error submitting report in background")
 		}
@@ -870,7 +874,7 @@ func (s *submitServer) submitWebhook(ctx context.Context, p parsedPayload, listi
 		if err != nil {
 			log.Err(err).Msg("Error sending webhook request")
 		} else if resp.StatusCode < 200 || resp.StatusCode > 300 {
-			log.Printf("unexpected webhook HTTP status code %d", resp.StatusCode)
+			log.Warn().Int("status_code", resp.StatusCode).Msg("Unexpected webhook response status")
 		} else {
 			return nil
 		}
@@ -1111,11 +1115,10 @@ func uploadToS3(ctx context.Context, s3Client *minio.Client, bucket, prefix, nam
 		Str("name", name).
 		Bool("compress", compress).
 		Logger()
-	log.Info().Msg("Uploading to S3")
 	objectName := prefix + "/" + name
 	r := reader // make a copy of reader so that the goroutine can copy from the original
 	if compress {
-		log.Debug().Msg("Compressing data before upload")
+		log.Trace().Str("object_name", objectName).Msg("Compressing data before upload")
 		pr, pw := io.Pipe()
 		go func() {
 			gz := gzip.NewWriter(pw)
@@ -1126,13 +1129,13 @@ func uploadToS3(ctx context.Context, s3Client *minio.Client, bucket, prefix, nam
 		r = pr
 		objectName += ".gz"
 	}
-	log.Debug().Str("object_name", objectName).Msg("Uploading object to S3")
+	log.Trace().Str("object_name", objectName).Msg("Uploading object to S3")
 	_, err := s3Client.PutObject(ctx, bucket, objectName, r, -1, minio.PutObjectOptions{
 		PartSize: 5 * 1024 * 1024, // 5MB part size so that our memory usage doesn't balloon
 	})
 	if err != nil {
 		return fmt.Errorf("failed to upload to S3: %w", err)
 	}
-	log.Info().Msg("Successfully uploaded to S3")
+	log.Debug().Str("object_name", objectName).Msg("Successfully uploaded to S3")
 	return nil
 }
