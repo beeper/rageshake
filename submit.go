@@ -969,6 +969,8 @@ func (s *submitServer) buildReportBody(ctx context.Context, p parsedPayload, lis
 
 	var dataKeys, eventDataKeys []string
 	var eventSource string
+	var messageSendStatusInfo string
+	var disappearingMessageInfo string
 	var replyPathPattern string
 	var cvCollectionViewHierarchy string
 	var roomDescription string
@@ -982,6 +984,10 @@ func (s *submitServer) buildReportBody(ctx context.Context, p parsedPayload, lis
 			eventDataKeys = append(eventDataKeys, k)
 		case "decrypted_event_source":
 			eventSource = p.Data[k]
+		case "disappearing_message_info":
+			disappearingMessageInfo = p.Data[k]
+		case "message_send_status_info":
+			messageSendStatusInfo = p.Data[k]
 		case "reply_path_pattern":
 			replyPathPattern = p.Data[k]
 		case "cv_collection_view_hierarchy":
@@ -1006,6 +1012,12 @@ func (s *submitServer) buildReportBody(ctx context.Context, p parsedPayload, lis
 	printDataKeys(p, &bodyBuf, "Event data", eventDataKeys)
 	if eventSource != "" {
 		_, _ = fmt.Fprintf(&bodyBuf, "### Event source:\n\n```json\n%s\n```\n", eventSource)
+	}
+	if disappearingMessageInfo != "" {
+		_, _ = fmt.Fprintf(&bodyBuf, "### Disappearing message info:\n\n```json\n%s\n```\n", disappearingMessageInfo)
+	}
+	if messageSendStatusInfo != "" {
+		_, _ = fmt.Fprintf(&bodyBuf, "### Message send status info:\n\n```json\n%s\n```\n", messageSendStatusInfo)
 	}
 	if replyPathPattern != "" {
 		_, _ = fmt.Fprintf(&bodyBuf, "### Reply Path Pattern:\n\n```json\n%s\n```\n", replyPathPattern)
