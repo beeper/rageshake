@@ -128,6 +128,42 @@ type submitResponse struct {
 
 var gplaySpamEmailRegex = regexp.MustCompile(`^[a-z]+.\d{5}@gmail\.com$`)
 
+var iosDataFromAppPreferredKeys = []string{
+	"User-Agent",
+	"Version",
+	"build",
+	"contact_permission_granted",
+	"device",
+	"network_type",
+	"os",
+	"low_power_enabled",
+	"user_id",
+	"user_token",
+	"utc_time",
+	"local_time",
+	"locale",
+	"default_app_language",
+	"verified_device_id",
+	"source",
+	"is_ios_on_mac",
+	"is_issue_persistent",
+	"media_included",
+	"matrix_cross_signing",
+	"matrix_device_id",
+	"matrix_first_sync_done",
+	"matrix_key_backup",
+	"matrix_secret_storage",
+	"matrix_secrets_master_key",
+	"matrix_secrets_megolm_backup_key",
+	"matrix_secrets_self_signing_key",
+	"matrix_secrets_user_signing_key",
+	"matrix_verified",
+	"preferences",
+	"labs",
+	"feature_flags",
+	"db_bridge_capabilities",
+}
+
 func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	log := zerolog.Ctx(req.Context()).With().Str("component", "submit_server").Logger()
 
@@ -1006,7 +1042,7 @@ func (s *submitServer) buildReportBody(ctx context.Context, p parsedPayload, lis
 			dataKeys = append(dataKeys, k)
 		}
 	}
-	sort.Strings(dataKeys)
+	dataKeys = orderDataFromAppKeys(p.AppName, dataKeys)
 	sort.Strings(eventDataKeys)
 
 	printDataKeys(p, &bodyBuf, "Event data", eventDataKeys)
@@ -1057,6 +1093,40 @@ func printDataKeys(p parsedPayload, output io.Writer, title string, keys []strin
 	}
 
 	fmt.Fprintf(output, "```\n")
+}
+
+func orderDataFromAppKeys(appName string, keys []string) []string {
+	if !isIOSBugReportApp(appName) {
+		sort.Strings(keys)
+		return keys
+	}
+
+	remaining := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		remaining[key] = struct{}{}
+	}
+
+	ordered := make([]string, 0, len(keys))
+	for _, key := range iosDataFromAppPreferredKeys {
+		if _, ok := remaining[key]; !ok {
+			continue
+		}
+		ordered = append(ordered, key)
+		delete(remaining, key)
+	}
+
+	tail := make([]string, 0, len(remaining))
+	for key := range remaining {
+		tail = append(tail, key)
+	}
+	sort.Strings(tail)
+
+	return append(ordered, tail...)
+}
+
+func isIOSBugReportApp(appName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(appName))
+	return strings.HasSuffix(normalized, "-ios")
 }
 
 func (s *submitServer) buildGenericIssueRequest(ctx context.Context, p parsedPayload, listingURL string) (title, body string) {
