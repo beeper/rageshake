@@ -36,6 +36,7 @@ var usernamePayloadTests = []struct {
 		},
 	},
 	{
+		name: "staging",
 		in: map[string]string{
 			"user_id": "@bender:beeper-staging.com",
 		},
@@ -46,6 +47,7 @@ var usernamePayloadTests = []struct {
 		},
 	},
 	{
+		name: "unknown domain",
 		in: map[string]string{
 			"user_id": "@bender:beeper-anywhere.com",
 		},
