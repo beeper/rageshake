@@ -920,9 +920,12 @@ func (s *submitServer) submitWebhook(ctx context.Context, p parsedPayload, listi
 	return err
 }
 
-func getUsernameFromPayload(p parsedPayload) (string, bool) {
+var userIDRegexp = regexp.MustCompile(`^@([^:]+):(beeper\.com|beeper-staging\.com|beeper-dev\.com)$`)
+
+func getUsernameFromPayload(p parsedPayload) (string, string, bool) {
 	isVerified := false
 	userID := p.Data["user_id"]
+	adminLink := ""
 	if len(userID) == 0 {
 		userID = p.Data["unverified_user_id"]
 		if len(userID) == 0 {
@@ -932,9 +935,15 @@ func getUsernameFromPayload(p parsedPayload) (string, bool) {
 		}
 	} else {
 		isVerified = true
+		adminLink = fmt.Sprintf("https://admin.beeper.com/user/%s", strings.TrimPrefix(userID, "@"))
+		if match := userIDRegexp.FindStringSubmatch(userID); match != nil {
+			username := match[1]
+			domain := match[2]
+			adminLink = fmt.Sprintf("https://admin.%s/user/%s", domain, username)
+		}
 	}
 	// Note: for staging/dev we still return the entire userID so it's clear they're not prod
-	return strings.TrimPrefix(strings.TrimSuffix(userID, ":beeper.com"), "@"), isVerified
+	return strings.TrimPrefix(strings.TrimSuffix(userID, ":beeper.com"), "@"), adminLink, isVerified
 }
 
 func buildReportTitle(userID string, p parsedPayload) string {
@@ -1132,7 +1141,7 @@ func isIOSBugReportApp(appName string) bool {
 func (s *submitServer) buildGenericIssueRequest(ctx context.Context, p parsedPayload, listingURL string) (title, body string) {
 	bodyBuf := s.buildReportBody(ctx, p, listingURL)
 
-	username, isVerified := getUsernameFromPayload(p)
+	username, adminLink, isVerified := getUsernameFromPayload(p)
 
 	// Swap out rageshake API url for SSO-version
 	rageshakeLogsURL := strings.ReplaceAll(listingURL, "rageshake.", "rageshake-sso.")
@@ -1140,7 +1149,7 @@ func (s *submitServer) buildGenericIssueRequest(ctx context.Context, p parsedPay
 	// Add log links to the body
 	fmt.Fprintf(bodyBuf, "\n### [Rageshake Logs](%s)", rageshakeLogsURL)
 	if isVerified {
-		fmt.Fprintf(bodyBuf, " | [User Admin](https://admin.beeper.com/user/%s)", username)
+		fmt.Fprintf(bodyBuf, " | [User Admin](%s)", adminLink)
 		if bridgeLogsURL, megahungryLogsURL, err := makeGrafanaLogsURLs(username); err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Error generating grafana URL")
 		} else {
