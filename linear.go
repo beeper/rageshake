@@ -54,6 +54,8 @@ const (
 	labelInternalUser  = "f72b7249-393f-46a2-9e44-62f0300aed2e"
 	labelNightlyUser   = "74d1438d-eb93-4352-8efe-c6f3b291874f" // external-alpha-tester
 	labelBooperApp     = "67871d86-ef4b-45bc-9144-0368e70ec9bb" // booper-app
+	labelPlusUser      = "a2d1001f-c70b-4c42-b19c-82c6587674cc"
+	labelPlusPlusUser  = "0687d85b-a008-42a8-8462-bfd7c16b71e3"
 )
 
 var appToTeamID = map[string]string{

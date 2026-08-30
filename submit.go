@@ -265,6 +265,9 @@ type matrixWhoamiResponse struct {
 		SupportRoomID string    `json:"supportRoomId"`
 		Email         string    `json:"email"`
 		CreatedAt     time.Time `json:"createdAt"`
+		Subscription  struct {
+			PlanID string `json:"planId"`
+		} `json:"subscription"`
 	}
 	User struct {
 		Bridges map[string]whoamiBridgeInfo `json:"bridges"`
@@ -782,8 +785,16 @@ func (s *submitServer) submitLinearIssue(ctx context.Context, p parsedPayload, l
 		labelIDs = append(labelIDs, labelInternalUser)
 	} else {
 		labelIDs = append(labelIDs, labelSupportReview)
-		if p.MatrixWhoami != nil && p.MatrixWhoami.UserInfo.Channel == "NIGHTLY" {
-			labelIDs = append(labelIDs, labelNightlyUser)
+		if p.MatrixWhoami != nil {
+			if p.MatrixWhoami.UserInfo.Channel == "NIGHTLY" {
+				labelIDs = append(labelIDs, labelNightlyUser)
+			}
+			switch p.MatrixWhoami.UserInfo.Subscription.PlanID {
+			case "PLUS":
+				labelIDs = append(labelIDs, labelPlusUser)
+			case "PLUS_PLUS":
+				labelIDs = append(labelIDs, labelPlusPlusUser)
+			}
 		}
 	}
 	if p.MatrixWhoami != nil {
