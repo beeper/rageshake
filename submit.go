@@ -35,6 +35,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -582,23 +583,86 @@ func (s *submitServer) parseMultipartRequest(ctx context.Context, req *http.Requ
 	p := parsedPayload{
 		Data: make(map[string]string),
 	}
+	uploader := &partUploader{
+		s3Client:  s.s3Client,
+		bucket:    s.s3Bucket,
+		reportDir: reportDir,
+		sem:       make(chan struct{}, maxConcurrentPartUploads),
+	}
 
 	for {
 		part, err := rdr.NextPart()
 		if err == io.EOF {
 			break
 		} else if err != nil {
+			uploader.wg.Wait()
 			return nil, err
 		}
 
-		if err = s.parseFormPart(ctx, part, &p, reportDir); err != nil {
+		if err = s.parseFormPart(ctx, part, &p, uploader); err != nil {
+			uploader.wg.Wait()
 			return nil, err
 		}
 	}
+	uploader.finish(&p)
 	return &p, nil
 }
 
-func (s *submitServer) parseFormPart(ctx context.Context, part *multipart.Part, p *parsedPayload, reportDir string) error {
+const maxConcurrentPartUploads = 8
+
+type partUpload struct {
+	isLog    bool
+	partName string
+	leafName string
+	err      error
+}
+
+type partUploader struct {
+	s3Client  *minio.Client
+	bucket    string
+	reportDir string
+	sem       chan struct{}
+	wg        sync.WaitGroup
+	uploads   []*partUpload
+	logCount  int
+}
+
+func (u *partUploader) start(ctx context.Context, upload *partUpload, data []byte, compressed bool) {
+	u.uploads = append(u.uploads, upload)
+	if upload.isLog {
+		u.logCount++
+	}
+	u.sem <- struct{}{}
+	u.wg.Add(1)
+	go func() {
+		defer func() {
+			<-u.sem
+			u.wg.Done()
+		}()
+		upload.err = putS3Object(ctx, u.s3Client, u.bucket, u.reportDir, upload.leafName, data, compressed)
+		if upload.err != nil {
+			zerolog.Ctx(ctx).Err(upload.err).Str("part_name", upload.partName).Msg("Error saving part")
+		}
+	}()
+}
+
+func (u *partUploader) finish(p *parsedPayload) {
+	u.wg.Wait()
+	for _, upload := range u.uploads {
+		switch {
+		case upload.isLog && upload.err != nil:
+			p.LogErrors = append(p.LogErrors, fmt.Sprintf("Error saving %s: %v", upload.partName, upload.err))
+		case upload.isLog:
+			p.Logs = append(p.Logs, upload.leafName)
+		case upload.err != nil:
+			p.FileErrors = append(p.FileErrors, fmt.Sprintf("Error saving %s: %v", upload.partName, upload.err))
+		default:
+			p.Files = append(p.Files, upload.leafName)
+		}
+	}
+}
+
+func (s *submitServer) parseFormPart(ctx context.Context, part *multipart.Part, p *parsedPayload, uploader *partUploader) error {
 	defer part.Close()
 	field := part.FormName()
 	partName := part.FileName()
@@ -631,24 +695,33 @@ func (s *submitServer) parseFormPart(ctx context.Context, part *multipart.Part, 
 	}
 
 	if field == "file" {
-		leafName, err := saveFormPartS3(ctx, s.s3Client, s.s3Bucket, partName, partReader, reportDir)
-		if err != nil {
-			log.Err(err).Msg("Error saving file part")
-			p.FileErrors = append(p.FileErrors, fmt.Sprintf("Error saving %s: %v", partName, err))
-		} else {
-			p.Files = append(p.Files, leafName)
+		if !filenameRegexp.MatchString(partName) {
+			log.Error().Msg("Error saving file part: invalid upload filename")
+			p.FileErrors = append(p.FileErrors, fmt.Sprintf("Error saving %s: invalid upload filename", partName))
+			return nil
 		}
+		data, err := io.ReadAll(partReader)
+		if err != nil {
+			return err
+		}
+		uploader.start(ctx, &partUpload{partName: partName, leafName: partName}, data, false)
 		return nil
 	}
 
 	if field == "log" || field == "compressed-log" {
-		leafName, err := saveLogPartS3(ctx, s.s3Client, s.s3Bucket, len(p.Logs), partName, partReader, reportDir)
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, err := io.Copy(gz, partReader)
+		if err == nil {
+			err = gz.Close()
+		}
 		if err != nil {
 			log.Err(err).Msg("Error saving (compressed-)log")
 			p.LogErrors = append(p.LogErrors, fmt.Sprintf("Error saving %s: %v", partName, err))
-		} else {
-			p.Logs = append(p.Logs, leafName)
+			return nil
 		}
+		leafName := logLeafName(uploader.logCount, partName)
+		uploader.start(ctx, &partUpload{isLog: true, partName: partName, leafName: leafName}, buf.Bytes(), true)
 		return nil
 	}
 
@@ -1182,31 +1255,38 @@ func respond(code int, w http.ResponseWriter) {
 }
 
 // S3 helpers
-func saveFormPartS3(ctx context.Context, s3Client *minio.Client, bucket, leafName string, reader io.Reader, reportDir string) (string, error) {
-	if !filenameRegexp.MatchString(leafName) {
-		return "", fmt.Errorf("invalid upload filename")
+func logLeafName(logNum int, filename string) string {
+	if logRegexp.MatchString(filename) {
+		return filename
 	}
-
-	err := uploadToS3(ctx, s3Client, bucket, reportDir, leafName, reader, false)
-	if err != nil {
-		return "", err
-	}
-	return leafName, nil
+	return fmt.Sprintf("logs-%04d.log", logNum)
 }
 
 func saveLogPartS3(ctx context.Context, s3Client *minio.Client, bucket string, logNum int, filename string, reader io.Reader, reportDir string) (string, error) {
-	var leafName string
-	if logRegexp.MatchString(filename) {
-		leafName = filename
-	} else {
-		leafName = fmt.Sprintf("logs-%04d.log", logNum)
-	}
+	leafName := logLeafName(logNum, filename)
 
 	err := uploadToS3(ctx, s3Client, bucket, reportDir, leafName, reader, true)
 	if err != nil {
 		return "", err
 	}
 	return leafName, nil
+}
+
+func putS3Object(ctx context.Context, s3Client *minio.Client, bucket, prefix, name string, data []byte, gzipped bool) error {
+	objectName := prefix + "/" + name
+	if gzipped {
+		objectName += ".gz"
+	}
+	_, err := s3Client.PutObject(ctx, bucket, objectName, bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to upload to S3: %w", err)
+	}
+	zerolog.Ctx(ctx).Debug().
+		Str("action", "upload_to_s3").
+		Str("object_name", objectName).
+		Int("size", len(data)).
+		Msg("Successfully uploaded to S3")
+	return nil
 }
 
 func uploadToS3(ctx context.Context, s3Client *minio.Client, bucket, prefix, name string, reader io.Reader, compress bool) error {
