@@ -20,10 +20,16 @@ api_server_url:
 webhook_url: https://example.com/rageshake-webhook
 
 # Per-user cap on reports that create a Linear issue and call the webhook.
-# Reports over the cap are still stored and listed. Defaults to 5 per 10
-# minutes; set max_issues to -1 to disable.
+# Reports over the cap are still stored and listed. Set max to -1 to disable.
 issue_rate_limit:
-  max_issues: 5
+  max: 5
+  window_minutes: 10
+
+# Cap on reports accepted per access token (or client IP when there's no
+# token). Reports over the cap get HTTP 429 and are not stored. Set max to -1
+# to disable.
+storage_rate_limit:
+  max: 30
   window_minutes: 10
 
 # See https://github.com/tulir/zeroconfig for details.

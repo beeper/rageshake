@@ -21,13 +21,16 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base32"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -53,7 +56,8 @@ type submitServer struct {
 	s3Client *minio.Client
 	s3Bucket string
 
-	issueRateLimiter *userRateLimiter
+	issueRateLimiter   *rateLimiter
+	storageRateLimiter *rateLimiter
 }
 
 // the type of payload which can be uploaded as JSON to the submit endpoint
@@ -189,6 +193,12 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if !s.storageRateLimiter.Allow(storageRateLimitKey(req)) {
+		log.Warn().Msg("Client is over the storage rate limit, rejecting report")
+		http.Error(w, "Too many reports", http.StatusTooManyRequests)
+		return
+	}
+
 	// Generate S3 object prefix for this report
 	t := time.Now().UTC()
 	prefix := t.Format("2006-01-02/150405")
@@ -229,6 +239,23 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	_, _ = w.Write([]byte("{}"))
+}
+
+// storageRateLimitKey identifies the sender before the body is read, so that
+// rejected reports never reach storage. The verified user ID is only known
+// after parsing, so this uses the access token, falling back to the client IP.
+func storageRateLimitKey(req *http.Request) string {
+	if auth := req.Header.Get("Authorization"); auth != "" {
+		sum := sha256.Sum256([]byte(auth))
+		return "token:" + hex.EncodeToString(sum[:])
+	}
+	if fwd := req.Header.Get("X-Forwarded-For"); fwd != "" {
+		return "ip:" + strings.TrimSpace(strings.Split(fwd, ",")[0])
+	}
+	if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		return "ip:" + host
+	}
+	return "ip:" + req.RemoteAddr
 }
 
 type globalBridgeStateInfo struct {
