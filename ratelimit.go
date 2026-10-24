@@ -19,8 +19,9 @@ var (
 	defaultStorageRateLimit = rateLimitConfig{Max: 30, WindowMinutes: 10}
 )
 
-// rateLimiter is a sliding window counter per key. It is in-memory, which is
-// fine while rageshake runs as a single replica.
+// rateLimiter is a sliding window counter per key. It is in-memory, so each
+// replica counts separately. The ingress hashes upstreams by client IP, so a
+// given sender normally reaches the same replica.
 type rateLimiter struct {
 	max    int
 	window time.Duration
