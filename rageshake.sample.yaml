@@ -25,9 +25,9 @@ issue_rate_limit:
   max: 5
   window_minutes: 10
 
-# Cap on reports accepted per access token (or client IP when there's no
-# token). Reports over the cap get HTTP 429 and are not stored. Set max to -1
-# to disable.
+# Cap on reports accepted per client IP (X-Real-IP from the ingress, or the
+# connection address). Reports over the cap get HTTP 429 and are not stored.
+# Set max to -1 to disable.
 storage_rate_limit:
   max: 30
   window_minutes: 10

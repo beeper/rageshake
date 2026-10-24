@@ -46,23 +46,16 @@ func TestRateLimiterDefaultsAndDisable(t *testing.T) {
 	}
 }
 
-func TestStorageRateLimitKey(t *testing.T) {
-	a := httptest.NewRequest("POST", "/api/submit", nil)
-	a.Header.Set("Authorization", "Bearer one")
-	b := httptest.NewRequest("POST", "/api/submit", nil)
-	b.Header.Set("Authorization", "Bearer two")
-	if storageRateLimitKey(a) == storageRateLimitKey(b) {
-		t.Fatal("different tokens should have different keys")
+func TestClientIP(t *testing.T) {
+	req := httptest.NewRequest("POST", "/api/submit", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("Authorization", "Bearer random")
+	req.Header.Set("X-Forwarded-For", "198.51.100.7")
+	if got := clientIP(req); got != "10.0.0.1" {
+		t.Fatalf("expected connection address, got %q", got)
 	}
-
-	c := httptest.NewRequest("POST", "/api/submit", nil)
-	c.RemoteAddr = "10.0.0.1:1234"
-	c.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.1")
-	if got := storageRateLimitKey(c); got != "ip:203.0.113.5" {
-		t.Fatalf("unexpected key %q", got)
-	}
-	c.Header.Del("X-Forwarded-For")
-	if got := storageRateLimitKey(c); got != "ip:10.0.0.1" {
-		t.Fatalf("unexpected key %q", got)
+	req.Header.Set("X-Real-IP", "203.0.113.5")
+	if got := clientIP(req); got != "203.0.113.5" {
+		t.Fatalf("expected X-Real-IP, got %q", got)
 	}
 }

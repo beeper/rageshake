@@ -15,7 +15,7 @@ type rateLimitConfig struct {
 var (
 	// Reports per verified user that create a Linear issue and call the webhook.
 	defaultIssueRateLimit = rateLimitConfig{Max: 5, WindowMinutes: 10}
-	// Reports per access token (or client IP) that are accepted and stored.
+	// Reports per client IP that are accepted and stored.
 	defaultStorageRateLimit = rateLimitConfig{Max: 30, WindowMinutes: 10}
 )
 

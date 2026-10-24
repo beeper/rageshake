@@ -21,9 +21,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base32"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -193,8 +191,9 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	senderKey := storageRateLimitKey(req)
-	if !s.storageRateLimiter.Allow(senderKey) {
+	ip := clientIP(req)
+	log = log.With().Str("client_ip", ip).Logger()
+	if !s.storageRateLimiter.Allow(ip) {
 		log.Warn().Msg("Client is over the storage rate limit, rejecting report")
 		http.Error(w, "Too many reports", http.StatusTooManyRequests)
 		return
@@ -231,7 +230,7 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	issueKey := p.VerifiedUserID
 	if issueKey == "" {
-		issueKey = senderKey
+		issueKey = "ip:" + ip
 	}
 	err := s.saveReport(log, *p, reportDir, listingURL, issueKey)
 	if err != nil {
@@ -246,22 +245,17 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	_, _ = w.Write([]byte("{}"))
 }
 
-// storageRateLimitKey identifies the sender before the body is read, so that
-// rejected reports never reach storage. The verified user ID is only known
-// after parsing, so this uses the access token, falling back to the client IP.
-// It is also the issue rate limit key for reports without a verified user.
-func storageRateLimitKey(req *http.Request) string {
-	if auth := req.Header.Get("Authorization"); auth != "" {
-		sum := sha256.Sum256([]byte(auth))
-		return "token:" + hex.EncodeToString(sum[:])
-	}
-	if fwd := req.Header.Get("X-Forwarded-For"); fwd != "" {
-		return "ip:" + strings.TrimSpace(strings.Split(fwd, ",")[0])
+// clientIP returns the address used for rate limiting. X-Real-IP is set by
+// the ingress, unlike X-Forwarded-For which clients can prepend to. Tokens
+// aren't used because random tokens would bypass the limit.
+func clientIP(req *http.Request) string {
+	if ip := strings.TrimSpace(req.Header.Get("X-Real-IP")); ip != "" {
+		return ip
 	}
 	if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
-		return "ip:" + host
+		return host
 	}
-	return "ip:" + req.RemoteAddr
+	return req.RemoteAddr
 }
 
 type globalBridgeStateInfo struct {
