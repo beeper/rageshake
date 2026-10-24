@@ -193,7 +193,8 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if !s.storageRateLimiter.Allow(storageRateLimitKey(req)) {
+	senderKey := storageRateLimitKey(req)
+	if !s.storageRateLimiter.Allow(senderKey) {
 		log.Warn().Msg("Client is over the storage rate limit, rejecting report")
 		http.Error(w, "Too many reports", http.StatusTooManyRequests)
 		return
@@ -228,7 +229,11 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	err := s.saveReport(log, *p, reportDir, listingURL)
+	issueKey := p.VerifiedUserID
+	if issueKey == "" {
+		issueKey = senderKey
+	}
+	err := s.saveReport(log, *p, reportDir, listingURL, issueKey)
 	if err != nil {
 		log.Err(err).Msg("Error handling report submission")
 		http.Error(w, "Internal error", 500)
@@ -244,6 +249,7 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // storageRateLimitKey identifies the sender before the body is read, so that
 // rejected reports never reach storage. The verified user ID is only known
 // after parsing, so this uses the access token, falling back to the client IP.
+// It is also the issue rate limit key for reports without a verified user.
 func storageRateLimitKey(req *http.Request) string {
 	if auth := req.Header.Get("Authorization"); auth != "" {
 		sum := sha256.Sum256([]byte(auth))
@@ -817,8 +823,8 @@ func (s *submitServer) saveReportBackground(ctx context.Context, p parsedPayload
 	return nil
 }
 
-func (s *submitServer) saveReport(log zerolog.Logger, p parsedPayload, reportDir, listingURL string) error {
-	rateLimited := !s.issueRateLimiter.Allow(p.VerifiedUserID)
+func (s *submitServer) saveReport(log zerolog.Logger, p parsedPayload, reportDir, listingURL, issueKey string) error {
+	rateLimited := !s.issueRateLimiter.Allow(issueKey)
 	if rateLimited {
 		p.Data["issue_rate_limited"] = "true"
 	}
