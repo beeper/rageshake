@@ -19,6 +19,19 @@ api_server_url:
 # A custom webhook URL that receives all the relevant data about the rageshake.
 webhook_url: https://example.com/rageshake-webhook
 
+# Per-user cap on reports that create a Linear issue and call the webhook.
+# Reports over the cap are still stored and listed. Set max to -1 to disable.
+issue_rate_limit:
+  max: 5
+  window_minutes: 10
+
+# Cap on reports accepted per client IP (X-Real-IP from the ingress, or the
+# connection address). Reports over the cap get HTTP 429 and are not stored.
+# Set max to -1 to disable.
+storage_rate_limit:
+  max: 30
+  window_minutes: 10
+
 # See https://github.com/tulir/zeroconfig for details.
 logging:
   min_level: debug

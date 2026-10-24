@@ -28,6 +28,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -52,6 +53,9 @@ type submitServer struct {
 	cfg      *config
 	s3Client *minio.Client
 	s3Bucket string
+
+	issueRateLimiter   *rateLimiter
+	storageRateLimiter *rateLimiter
 }
 
 // the type of payload which can be uploaded as JSON to the submit endpoint
@@ -187,6 +191,14 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	ip := clientIP(req)
+	log = log.With().Str("client_ip", ip).Logger()
+	if !s.storageRateLimiter.Allow(ip) {
+		log.Warn().Msg("Client is over the storage rate limit, rejecting report")
+		http.Error(w, "Too many reports", http.StatusTooManyRequests)
+		return
+	}
+
 	// Generate S3 object prefix for this report
 	t := time.Now().UTC()
 	prefix := t.Format("2006-01-02/150405")
@@ -216,7 +228,11 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	err := s.saveReport(log, *p, reportDir, listingURL)
+	issueKey := p.VerifiedUserID
+	if issueKey == "" {
+		issueKey = "ip:" + ip
+	}
+	err := s.saveReport(log, *p, reportDir, listingURL, issueKey)
 	if err != nil {
 		log.Err(err).Msg("Error handling report submission")
 		http.Error(w, "Internal error", 500)
@@ -227,6 +243,19 @@ func (s *submitServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	_, _ = w.Write([]byte("{}"))
+}
+
+// clientIP returns the address used for rate limiting. X-Real-IP is set by
+// the ingress, unlike X-Forwarded-For which clients can prepend to. Tokens
+// aren't used because random tokens would bypass the limit.
+func clientIP(req *http.Request) string {
+	if ip := strings.TrimSpace(req.Header.Get("X-Real-IP")); ip != "" {
+		return ip
+	}
+	if host, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
+		return host
+	}
+	return req.RemoteAddr
 }
 
 type globalBridgeStateInfo struct {
@@ -788,13 +817,23 @@ func (s *submitServer) saveReportBackground(ctx context.Context, p parsedPayload
 	return nil
 }
 
-func (s *submitServer) saveReport(log zerolog.Logger, p parsedPayload, reportDir, listingURL string) error {
+func (s *submitServer) saveReport(log zerolog.Logger, p parsedPayload, reportDir, listingURL, issueKey string) error {
+	rateLimited := !s.issueRateLimiter.Allow(issueKey)
+	if rateLimited {
+		p.Data["issue_rate_limited"] = "true"
+	}
+
 	var summaryBuf bytes.Buffer
 	p.WriteToBuffer(&summaryBuf)
 	ctx := log.WithContext(context.Background())
 	if err := uploadToS3(ctx, s.s3Client, s.s3Bucket, reportDir, "details.log", &summaryBuf, true); err != nil {
 		log.Err(err).Msg("Error uploading report details")
 		return err
+	}
+
+	if rateLimited {
+		log.Warn().Msg("User is over the issue rate limit, stored report without creating an issue")
+		return nil
 	}
 
 	go func() {
