@@ -54,6 +54,8 @@ type config struct {
 
 	WebhookURL string `yaml:"webhook_url"`
 
+	IssueRateLimit issueRateLimitConfig `yaml:"issue_rate_limit"`
+
 	Logging zeroconfig.Config `yaml:"logging"`
 
 	// S3 configuration
@@ -187,10 +189,11 @@ func main() {
 	}
 
 	http.Handle("/api/submit", &submitServer{
-		apiPrefix: apiPrefix,
-		cfg:       cfg,
-		s3Client:  s3Client,
-		s3Bucket:  cfg.S3Bucket,
+		apiPrefix:        apiPrefix,
+		cfg:              cfg,
+		s3Client:         s3Client,
+		s3Bucket:         cfg.S3Bucket,
+		issueRateLimiter: newUserRateLimiter(cfg.IssueRateLimit),
 	})
 
 	ls := &logServer{

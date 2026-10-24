@@ -52,6 +52,8 @@ type submitServer struct {
 	cfg      *config
 	s3Client *minio.Client
 	s3Bucket string
+
+	issueRateLimiter *userRateLimiter
 }
 
 // the type of payload which can be uploaded as JSON to the submit endpoint
@@ -789,12 +791,22 @@ func (s *submitServer) saveReportBackground(ctx context.Context, p parsedPayload
 }
 
 func (s *submitServer) saveReport(log zerolog.Logger, p parsedPayload, reportDir, listingURL string) error {
+	rateLimited := !s.issueRateLimiter.Allow(p.VerifiedUserID)
+	if rateLimited {
+		p.Data["issue_rate_limited"] = "true"
+	}
+
 	var summaryBuf bytes.Buffer
 	p.WriteToBuffer(&summaryBuf)
 	ctx := log.WithContext(context.Background())
 	if err := uploadToS3(ctx, s.s3Client, s.s3Bucket, reportDir, "details.log", &summaryBuf, true); err != nil {
 		log.Err(err).Msg("Error uploading report details")
 		return err
+	}
+
+	if rateLimited {
+		log.Warn().Msg("User is over the issue rate limit, stored report without creating an issue")
+		return nil
 	}
 
 	go func() {
