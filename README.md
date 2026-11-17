@@ -28,6 +28,12 @@ Serves submitted bug reports. Protected by basic HTTP auth using the
 username/password provided in the environment. A browsable list, collated by
 report submission date and time.
 
+### DELETE `/api/reports/<date>/<report>`
+
+Deletes one report, e.g. `/api/reports/2026-01-02/150405-ABCDEFGH`. Requires
+`Authorization: Bearer <reports_delete_token>` and is only enabled when that
+token is configured. Returns 404 if the report doesn't exist.
+
 ### POST `/api/submit`
 
 Submission endpoint: this is where applications should send their reports.

@@ -44,6 +44,9 @@ type config struct {
 	BugsPass      string `yaml:"listings_auth_pass"`
 	BugsJWTSecret string `yaml:"listings_jwt_secret"`
 
+	// Bearer token required by DELETE /api/reports/<report>. Deletion is disabled when empty.
+	ReportsDeleteToken string `yaml:"reports_delete_token"`
+
 	// External URI to /api
 	APIPrefix string `yaml:"api_prefix"`
 
@@ -205,6 +208,16 @@ func main() {
 	}
 	fs := basicAuthOrJWTAuthenticated(ls, cfg.BugsUser, cfg.BugsPass, "Riot bug reports", []byte(cfg.BugsJWTSecret))
 	http.Handle("/api/listing/", http.StripPrefix("/api/listing", fs))
+
+	// The stack leaves "${key}" in place when the secret is missing
+	if cfg.ReportsDeleteToken != "" && !strings.HasPrefix(cfg.ReportsDeleteToken, "${") {
+		http.Handle("/api/reports/", http.StripPrefix("/api/reports", &reportDeleteServer{
+			token:    cfg.ReportsDeleteToken,
+			root:     ls.root,
+			s3Bucket: cfg.S3Bucket,
+			s3Client: s3Client,
+		}))
+	}
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "ok")
