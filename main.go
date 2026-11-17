@@ -209,7 +209,8 @@ func main() {
 	fs := basicAuthOrJWTAuthenticated(ls, cfg.BugsUser, cfg.BugsPass, "Riot bug reports", []byte(cfg.BugsJWTSecret))
 	http.Handle("/api/listing/", http.StripPrefix("/api/listing", fs))
 
-	if cfg.ReportsDeleteToken != "" {
+	// The stack leaves "${key}" in place when the secret is missing
+	if cfg.ReportsDeleteToken != "" && !strings.HasPrefix(cfg.ReportsDeleteToken, "${") {
 		http.Handle("/api/reports/", http.StripPrefix("/api/reports", &reportDeleteServer{
 			token:    cfg.ReportsDeleteToken,
 			root:     ls.root,
