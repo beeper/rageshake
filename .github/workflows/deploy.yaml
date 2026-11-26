@@ -10,17 +10,17 @@ jobs:
   build-docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
 
       - name: Login to Beeper Docker registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           registry: ${{ secrets.CI_REGISTRY }}
           username: ${{ secrets.CI_REGISTRY_USER }}
           password: ${{ secrets.CI_REGISTRY_PASSWORD }}
 
       - name: Docker Build
-        uses: docker/build-push-action@v2
+        uses: docker/build-push-action@v7
         with:
           cache-from: ${{ env.CI_REGISTRY_IMAGE }}:latest
           pull: true
@@ -34,7 +34,7 @@ jobs:
     if: github.ref == 'refs/heads/beeper'
     steps:
       - name: Login to Beeper Docker registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v4
         with:
           registry: ${{ secrets.CI_REGISTRY }}
           username: ${{ secrets.CI_REGISTRY_USER }}

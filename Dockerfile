@@ -1,4 +1,4 @@
-FROM golang:alpine as builder
+FROM golang:1.27-alpine3.24 as builder
 RUN apk add --update --no-cache git ca-certificates
 
 RUN mkdir /build
@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o rageshake
 
-FROM alpine:3.16
+FROM alpine:3.24
 COPY --from=builder /build/rageshake /rageshake
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 WORKDIR /
